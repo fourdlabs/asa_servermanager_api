@@ -1,0 +1,36 @@
+{
+    "maps": {
+        "island": {
+            "zip_dir": "backups/island",
+            "extract_dir": "data/island",
+            "file_extensions":  [
+                ".arktributetribe",
+                ".arkprofile",
+                ".profilebak",
+                ".arktribe",
+                ".tribebak"
+            ],
+            "specific_files": [
+            "ScorchedEarth_WP.ark"
+            ],
+            "interval_minutes": 30,
+            "retention_days": 30
+        },
+        "center": {
+            "zip_dir": "backups/center",
+            "extract_dir": "data/center",
+            "file_extensions":  [
+                ".arktributetribe",
+                ".arkprofile",
+                ".profilebak",
+                ".arktribe",
+                ".tribebak"
+            ],
+            "specific_files": [
+            "ScorchedEarth_WP.ark"
+            ],
+            "interval_minutes": 30,
+            "retention_days": 30
+        }
+    }
+}

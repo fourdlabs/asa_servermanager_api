@@ -1,0 +1,14 @@
+[
+    {
+        "map": "island",
+        "executable": "C:/Users/Doanrii/Documents/git_project/asa_servermanager_api/src/_bin/testapp/island/app.exe",
+        "args": ["--arg3", "value3", "--arg4", "value4"],
+        "restart_interval": 5
+    },
+    {
+        "map": "center",
+        "executable": "C:/Users/Doanrii/Documents/git_project/asa_servermanager_api/src/_bin/testapp/center/app.exe",
+        "args": ["--arg3", "value3", "--arg4", "value4"],
+        "restart_interval": 5
+    }
+]

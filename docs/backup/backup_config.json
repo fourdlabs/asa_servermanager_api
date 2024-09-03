@@ -1,0 +1,20 @@
+{
+    "maps": {
+        "island": {
+            "zip_dir": "backups/island",
+            "extract_dir": "data/island",
+            "file_extensions": [".txt", ".log"],
+            "specific_files": ["important_file.txt"],
+            "interval_minutes": 30,
+            "retention_days": 7
+        },
+        "center": {
+            "zip_dir": "backups/center",
+            "extract_dir": "data/center",
+            "file_extensions": [".csv", ".xml"],
+            "specific_files": ["config.xml"],
+            "interval_minutes": 60,
+            "retention_days": 14
+        }
+    }
+}

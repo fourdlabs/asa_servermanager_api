@@ -1,0 +1,20 @@
+[
+    {
+        "map": "island",
+        "ip": "games.phascendants.online",
+        "port": "31001",
+        "pass": "5QyoPpRyWaLC"
+    },
+    {
+        "map": "se",
+        "ip": "games.phascendants.online",
+        "port": "31002",
+        "pass": "5QyoPpRyWaLC"
+    },
+    {
+        "map": "center",
+        "ip": "games.phascendants.online",
+        "port": "31011",
+        "pass": "5QyoPpRyWaLC"
+    }
+]

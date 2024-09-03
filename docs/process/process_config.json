@@ -1,0 +1,16 @@
+[
+    {
+        "map": "island",
+        "dir": "./island_dir",
+        "executable": "test1.exe",
+        "args": ["--arg3", "value3", "--arg4", "value4"],
+        "restart_interval": 5
+    },
+    {
+        "map": "center",
+        "dir": "./center_dir",
+        "executable": "test2.exe",
+        "args": ["--arg3", "value3", "--arg4", "value4"],
+        "restart_interval": 5
+    }
+]

@@ -1,0 +1,26 @@
+[
+    {
+        "map": "island",
+        "ip": "games.phascendants.online",
+        "port": "1234",
+        "pass": "asd123"
+    },
+    {
+        "map": "se",
+        "ip": "games.phascendants.online",
+        "port": "1234",
+        "pass": "asd123"
+    },
+    {
+        "map": "center",
+        "ip": "games.phascendants.online",
+        "port": "1234",
+        "pass": "asd123"
+    },
+    {
+        "map": "aberration",
+        "ip": "games.phascendants.online",
+        "port": "1234",
+        "pass": "asd123"
+    }
+]
