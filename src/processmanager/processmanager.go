@@ -27,13 +27,11 @@ type ProcessManager struct {
 	configs   map[string]ProcessConfig
 	processes map[string]*exec.Cmd
 	mu        sync.Mutex
-	logs      map[string][]string
 }
 
 var (
 	myMap       = make(map[string]bool)
 	myMapSarted = make(map[string]bool)
-	processLogs = make(map[string][]string)
 )
 
 func NewProcessManager(configFile string) (*ProcessManager, error) {
