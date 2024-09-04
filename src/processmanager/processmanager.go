@@ -150,7 +150,7 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 	for {
 		pid, err := ReadPID(pidFile)
 		if err == nil && IsProcessRunning(pid) {
-			// Process is running; no need to restart it.
+
 			time.Sleep(time.Duration(config.RestartInterval) * time.Second)
 			continue
 		}
@@ -232,12 +232,11 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 }
 
 func CreateLogFile(mapName string) (*os.File, error) {
-	// Get the current date and time in the format MM-DD-YYYY_HH_MM_AM/PM
+
 	dateStr := time.Now().Format("01-02-2006")
 	timeStr := time.Now().Format("03_04_PM")
 	logFileName := fmt.Sprintf("./logs/%s_%s_%s.log", mapName, dateStr, timeStr)
 
-	// Create the log file
 	file, err := os.Create(logFileName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log file %s: %v", logFileName, err)
@@ -254,11 +253,10 @@ func WriteLog(file *os.File, message string) error {
 }
 
 func RetrieveLogs(mapName string) (string, error) {
-	// Get the current date in the format MM-DD-YYYY
+
 	dateStr := time.Now().Format("01-02-2006")
 	logFileName := fmt.Sprintf("./logs/%s_%s.log", mapName, dateStr)
 
-	// Open the log file
 	file, err := os.Open(logFileName)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -268,7 +266,6 @@ func RetrieveLogs(mapName string) (string, error) {
 	}
 	defer file.Close()
 
-	// Read the log file
 	stat, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("failed to stat log file %s: %w", logFileName, err)
