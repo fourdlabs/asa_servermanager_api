@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -139,18 +140,12 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 		return
 	}
 
-	pidFile := filepath.Join("./data", GeneratePIDFileName(mapName))
-	logFile, err := CreateLogFile(mapName)
-	if err != nil {
-		log.Printf("Error creating log file: %v", err)
-		return
-	}
-	defer logFile.Close()
+	pidFile := GeneratePIDFileName(mapName)
+	logFilePath := fmt.Sprintf("./stdout/%s.log", mapName)
 
 	for {
 		pid, err := ReadPID(pidFile)
 		if err == nil && IsProcessRunning(pid) {
-
 			time.Sleep(time.Duration(config.RestartInterval) * time.Second)
 			continue
 		}
@@ -158,6 +153,15 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 		if myMap[mapName] {
 			myMap[mapName] = true
 			myMapSarted[mapName] = true
+
+			// Close and remove the old log file
+			if err := pm.CopyAndTimestampLogFile(mapName); err != nil {
+				log.Printf("Error copying log file: %v", err)
+			}
+
+			if err := os.Remove(logFilePath); err != nil {
+				log.Printf("Error removing old log file: %v", err)
+			}
 
 			cmd := exec.Command(config.Executable, config.Args...)
 			cmd.Dir = filepath.Dir(config.Executable)
@@ -181,18 +185,31 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 				continue
 			}
 
+			// Create a new log file for the new process
+			logFile, err := CreateLogFile(mapName)
+			if err != nil {
+				log.Printf("Error creating new log file: %v", err)
+				time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+				continue
+			}
+			defer logFile.Close()
+
 			go func() {
 				scanner := bufio.NewScanner(stdoutPipe)
 				for scanner.Scan() {
 					logMessage := fmt.Sprintf("%s", scanner.Text())
-					WriteLog(logFile, logMessage)
+					if err := WriteLog(logFile, logMessage); err != nil {
+						log.Printf("Failed to write log: %v", err)
+					}
 				}
 			}()
 			go func() {
 				scanner := bufio.NewScanner(stderrPipe)
 				for scanner.Scan() {
 					logMessage := fmt.Sprintf("%s", scanner.Text())
-					WriteLog(logFile, logMessage)
+					if err := WriteLog(logFile, logMessage); err != nil {
+						log.Printf("Failed to write log: %v", err)
+					}
 				}
 			}()
 
@@ -231,11 +248,39 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 	}
 }
 
-func CreateLogFile(mapName string) (*os.File, error) {
+func (pm *ProcessManager) CopyAndTimestampLogFile(mapName string) error {
+	srcLogFileName := fmt.Sprintf("./stdout/%s.log", mapName)
+	if _, err := os.Stat(srcLogFileName); os.IsNotExist(err) {
+		log.Printf("No log file found to copy for process '%s'", mapName)
+		return nil // No old log file to copy
+	}
 
-	dateStr := time.Now().Format("01-02-2006")
-	timeStr := time.Now().Format("03_04_PM")
-	logFileName := fmt.Sprintf("./logs/%s_%s_%s.log", mapName, dateStr, timeStr)
+	timestamp := time.Now().Format("01-02-2006_03-04-05_pm")
+	dstLogFileName := fmt.Sprintf("./logs/%s_%s.log", mapName, timestamp)
+
+	inputFile, err := os.Open(srcLogFileName)
+	if err != nil {
+		return fmt.Errorf("failed to open log file %s: %v", srcLogFileName, err)
+	}
+	defer inputFile.Close()
+
+	outputFile, err := os.Create(dstLogFileName)
+	if err != nil {
+		return fmt.Errorf("failed to create log file %s: %v", dstLogFileName, err)
+	}
+	defer outputFile.Close()
+
+	_, err = io.Copy(outputFile, inputFile)
+	if err != nil {
+		return fmt.Errorf("failed to copy log file to %s: %v", dstLogFileName, err)
+	}
+
+	log.Printf("Log file %s copied to %s", srcLogFileName, dstLogFileName)
+	return nil
+}
+
+func CreateLogFile(mapName string) (*os.File, error) {
+	logFileName := fmt.Sprintf("./stdout/%s.log", mapName)
 
 	file, err := os.Create(logFileName)
 	if err != nil {
@@ -245,17 +290,21 @@ func CreateLogFile(mapName string) (*os.File, error) {
 }
 
 func WriteLog(file *os.File, message string) error {
+
 	_, err := file.WriteString(message + "\n")
 	if err != nil {
 		return fmt.Errorf("failed to write to log file: %v", err)
 	}
+
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to flush log file: %v", err)
+	}
+
 	return nil
 }
 
 func RetrieveLogs(mapName string) (string, error) {
-
-	dateStr := time.Now().Format("01-02-2006")
-	logFileName := fmt.Sprintf("./logs/%s_%s.log", mapName, dateStr)
+	logFileName := fmt.Sprintf("./stdout/%s.log", mapName)
 
 	file, err := os.Open(logFileName)
 	if err != nil {
@@ -296,6 +345,7 @@ func (pm *ProcessManager) StartAllProcesses() {
 			if err == nil && IsProcessRunning(pid) {
 				log.Printf("Resuming monitoring of existing process '%s' with PID %d", mapName, pid)
 				myMap[mapName] = true
+				myMapSarted[mapName] = true
 				go pm.MonitorProcess(mapName)
 				continue
 			}

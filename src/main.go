@@ -21,5 +21,12 @@ func main() {
 			log.Printf("Failed to create data directory: %v", err)
 		}
 	}
+	stdoutFile := "./stdout"
+	if _, err := os.Stat(stdoutFile); os.IsNotExist(err) {
+		err := os.MkdirAll(stdoutFile, 0755)
+		if err != nil {
+			log.Printf("Failed to create data directory: %v", err)
+		}
+	}
 	api.SetupRoutes()
 }

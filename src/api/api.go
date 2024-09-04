@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	limiter      = rate.NewLimiter(rate.Every(time.Second), 1)
+	limiter      = rate.NewLimiter(rate.Every(time.Second), 10)
 	limiterMutex sync.Mutex
 )
 

@@ -16,6 +16,7 @@ var (
 
 func StartProcess(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
+
 	pm, err := processmanager.NewProcessManager(process_conf)
 	if err != nil {
 		log.Printf("Failed to create process manager: %v", err)
@@ -32,18 +33,32 @@ func StartProcess(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to start backup schedule for map 'center': %v", err)
 	}
 
-	response := map[string]string{"status": "Process started", "map": mapName, "data": res}
+	response := map[string]interface{}{
+		"status": "Process started",
+		"map":    mapName,
+		"logs":   res,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
 func StopProcess(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
+
 	pm, err := processmanager.NewProcessManager(process_conf)
 	if err != nil {
 		log.Printf("Failed to create process manager: %v", err)
 	}
 	res := pm.DisableProcess(mapName)
-	response := map[string]string{"status": "Process stopped", "map": mapName, "data": res}
+
+	response := map[string]interface{}{
+		"status": "Process started",
+		"map":    mapName,
+		"logs":   res,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
