@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,263 +25,218 @@ type MapConfig struct {
 	RetentionDays   int      `json:"retention_days"`
 }
 
-// BackupManager manages backup schedules for multiple maps
 type BackupManager struct {
-	config      BackupConfig
-	schedulers  map[string]*time.Ticker
-	stopSignals map[string]chan struct{}
-	mu          sync.Mutex
+	config     BackupConfig
+	configFile string
+	schedulers map[string]*time.Ticker
+	mu         sync.Mutex
 }
 
-// NewBackupManager initializes a new BackupManager
-func NewBackupManager(configFilePath string) (*BackupManager, error) {
-	configFile, err := os.Open(configFilePath)
+func NewBackupManager(configFile string) (*BackupManager, error) {
+	bm := &BackupManager{
+		configFile: configFile,
+		schedulers: make(map[string]*time.Ticker),
+	}
+	err := bm.loadConfig()
 	if err != nil {
 		return nil, err
 	}
-	defer configFile.Close()
-
-	var config BackupConfig
-	decoder := json.NewDecoder(configFile)
-	err = decoder.Decode(&config)
-	if err != nil {
-		return nil, err
-	}
-
-	return &BackupManager{
-		config:      config,
-		schedulers:  make(map[string]*time.Ticker),
-		stopSignals: make(map[string]chan struct{}),
-	}, nil
+	return bm, nil
 }
 
-// SaveLastBackupTime saves the last backup time to a file
-func SaveLastBackupTime(mapName, timeStr string) error {
-	filename := fmt.Sprintf("%s_saved.txt", mapName)
-	return os.WriteFile(filename, []byte(timeStr), 0644)
-}
-
-// LoadLastBackupTime loads the last backup time from a file
-func LoadLastBackupTime(mapName string) (string, error) {
-	filename := fmt.Sprintf("%s_saved.txt", mapName)
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
-	}
-	return string(data), nil
-}
-
-// ZipFiles zips the files in the directory
-func ZipFiles(srcDir, zipFilePath string, fileFilter func(string) bool) error {
-	outFile, err := os.Create(zipFilePath)
+func (bm *BackupManager) loadConfig() error {
+	file, err := os.Open(bm.configFile)
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
+	defer file.Close()
 
-	zipWriter := zip.NewWriter(outFile)
-	defer zipWriter.Close()
-
-	err = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		if !fileFilter(path) {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-
-		zipFile, err := zipWriter.Create(relPath)
-		if err != nil {
-			return err
-		}
-
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		_, err = io.Copy(zipFile, file)
-		return err
-	})
-	return err
+	decoder := json.NewDecoder(file)
+	return decoder.Decode(&bm.config)
 }
 
-// IncrementalBackup performs the incremental backup operation for a specific map
-func IncrementalBackup(config MapConfig, mapName string) error {
-	lastBackupTimeStr, err := LoadLastBackupTime(mapName)
-	if err != nil {
-		return err
-	}
-
-	var lastBackupTime time.Time
-	if lastBackupTimeStr != "" {
-		lastBackupTime, err = time.Parse(time.RFC3339, lastBackupTimeStr)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Define a filter function to select only files modified since the last backup
-	fileFilter := func(path string) bool {
-		fileInfo, err := os.Stat(path)
-		if err != nil {
-			return false
-		}
-		return fileInfo.ModTime().After(lastBackupTime)
-	}
-
-	currentTime := time.Now().Format(time.RFC3339)
-	zipFilePath := filepath.Join(config.ZipDir, fmt.Sprintf("%s_backup_%s.zip", mapName, currentTime))
-	err = ZipFiles(config.ExtractDir, zipFilePath, fileFilter)
-	if err != nil {
-		return err
-	}
-
-	// Save the timestamp of the last successful backup
-	return SaveLastBackupTime(mapName, currentTime)
-}
-
-// RemoveOldBackups removes backups older than the retention period
-func RemoveOldBackups(config MapConfig) error {
-	retentionPeriod := time.Duration(config.RetentionDays) * 24 * time.Hour
-	now := time.Now()
-
-	files, err := os.ReadDir(config.ZipDir)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filePath := filepath.Join(config.ZipDir, file.Name())
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			return err
-		}
-
-		// Check if the file is older than the retention period
-		if now.Sub(fileInfo.ModTime()) > retentionPeriod {
-			err = os.Remove(filePath)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Removed old backup file: %s\n", filePath)
-		}
-	}
-
-	return nil
-}
-
-// StartBackupSchedule starts or resumes backup scheduling for a specific map
 func (bm *BackupManager) StartBackupSchedule(mapName string) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	if _, exists := bm.schedulers[mapName]; exists {
-		return fmt.Errorf("backup schedule for %s is already running", mapName)
+	config, ok := bm.config.Maps[mapName]
+	if !ok {
+		return fmt.Errorf("no configuration found for map: %s", mapName)
 	}
 
-	mapConfig, exists := bm.config.Maps[mapName]
-	if !exists {
-		return fmt.Errorf("map %s not found in configuration", mapName)
+	// Mark the map as having an active backup schedule
+	saveFilePath := fmt.Sprintf("./data/%s.save", mapName)
+	err := os.WriteFile(saveFilePath, []byte("true"), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write active schedule file: %w", err)
 	}
 
-	ticker := time.NewTicker(time.Duration(mapConfig.IntervalMinutes) * time.Minute)
-	stopSignal := make(chan struct{})
+	bm.startNewBackup(mapName, config)
+	return nil
+}
 
+func (bm *BackupManager) resumeBackup(mapName string, config MapConfig, lastBackupFile string) {
+	ticker := time.NewTicker(time.Duration(config.IntervalMinutes) * time.Minute)
 	bm.schedulers[mapName] = ticker
-	bm.stopSignals[mapName] = stopSignal
 
-	go func(name string, conf MapConfig) {
-		// Perform initial backup
-		err := IncrementalBackup(conf, name)
-		if err != nil {
-			log.Printf("Error backing up %s: %v\n", name, err)
+	go func() {
+		for range ticker.C {
+			bm.IncrementalBackup(mapName, config)
 		}
+	}()
+}
 
-		// Remove old backups
-		err = RemoveOldBackups(conf)
-		if err != nil {
-			log.Printf("Error removing old backups for %s: %v\n", name, err)
+func (bm *BackupManager) startNewBackup(mapName string, config MapConfig) {
+	ticker := time.NewTicker(time.Duration(config.IntervalMinutes) * time.Minute)
+	bm.schedulers[mapName] = ticker
+
+	go func() {
+		bm.IncrementalBackup(mapName, config)
+		for range ticker.C {
+			bm.IncrementalBackup(mapName, config)
 		}
+	}()
+}
 
-		for {
-			select {
-			case <-ticker.C:
-				err := IncrementalBackup(conf, name)
+func (bm *BackupManager) IncrementalBackup(mapName string, config MapConfig) error {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	timestamp := time.Now().Format("20060102_150405")
+	zipFileName := fmt.Sprintf("%s_%s.zip", mapName, timestamp)
+	zipFilePath := filepath.Join(config.ZipDir, zipFileName)
+
+	zipFile, err := os.Create(zipFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to create zip file: %w", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	for _, ext := range config.FileExtensions {
+		err := filepath.Walk(config.ExtractDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && filepath.Ext(info.Name()) == ext {
+				err := bm.addFileToZip(zipWriter, path)
 				if err != nil {
-					log.Printf("Error backing up %s: %v\n", name, err)
+					return err
 				}
-				err = RemoveOldBackups(conf)
-				if err != nil {
-					log.Printf("Error removing old backups for %s: %v\n", name, err)
-				}
-			case <-stopSignal:
-				ticker.Stop()
-				return
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add files with extension %s to zip: %w", ext, err)
+		}
+	}
+
+	for _, file := range config.SpecificFiles {
+		filePath := filepath.Join(config.ExtractDir, file)
+		if _, err := os.Stat(filePath); err == nil {
+			err := bm.addFileToZip(zipWriter, filePath)
+			if err != nil {
+				return fmt.Errorf("failed to add specific file %s to zip: %w", file, err)
 			}
 		}
-	}(mapName, mapConfig)
+	}
+
+	lastBackupFile := fmt.Sprintf("./data/%s_saved.txt", mapName)
+	err = os.WriteFile(lastBackupFile, []byte(timestamp), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write last backup timestamp: %w", err)
+	}
+
+	// Call RemoveOldBackups after creating the new backup
+	err = bm.RemoveOldBackups(mapName, config)
+	if err != nil {
+		return fmt.Errorf("failed to remove old backups: %w", err)
+	}
 
 	return nil
 }
 
-// StopBackupSchedule stops the backup scheduling for a specific map
+func (bm *BackupManager) addFileToZip(zipWriter *zip.Writer, filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	w, err := zipWriter.Create(filepath.Base(filePath))
+	if err != nil {
+		return fmt.Errorf("failed to create entry in zip file: %w", err)
+	}
+
+	_, err = io.Copy(w, file)
+	if err != nil {
+		return fmt.Errorf("failed to write file to zip: %w", err)
+	}
+
+	return nil
+}
+
+func (bm *BackupManager) RemoveOldBackups(mapName string, config MapConfig) error {
+	retentionDuration := time.Duration(config.RetentionDays) * 24 * time.Hour
+	now := time.Now()
+
+	err := filepath.Walk(config.ZipDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(info.Name()) == ".zip" && info.ModTime().Add(retentionDuration).Before(now) {
+			err := os.Remove(path)
+			if err != nil {
+				return fmt.Errorf("failed to remove old backup: %w", err)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to clean up old backups: %w", err)
+	}
+
+	return nil
+}
+
 func (bm *BackupManager) StopBackupSchedule(mapName string) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	_, exists := bm.schedulers[mapName]
-	if !exists {
-		return fmt.Errorf("backup schedule for %s is not running", mapName)
+	ticker, ok := bm.schedulers[mapName]
+	if !ok {
+		return fmt.Errorf("no running backup schedule for map: %s", mapName)
 	}
 
-	stopSignal := bm.stopSignals[mapName]
-	close(stopSignal)
+	ticker.Stop()
 	delete(bm.schedulers, mapName)
-	delete(bm.stopSignals, mapName)
+
+	// Mark the map as not having an active backup schedule
+	saveFilePath := fmt.Sprintf("./data/%s.save", mapName)
+	err := os.WriteFile(saveFilePath, []byte("false"), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write inactive schedule file: %w", err)
+	}
 
 	return nil
 }
 
-// StartOrResumeBackups checks saved files and starts or resumes backup schedules
 func (bm *BackupManager) StartOrResumeBackups() error {
 	for mapName := range bm.config.Maps {
-		lastBackupTimeStr, err := LoadLastBackupTime(mapName)
-		if err != nil {
-			return fmt.Errorf("failed to load last backup time for %s: %w", mapName, err)
-		}
-
-		if lastBackupTimeStr == "" {
-			// If the saved file is empty, start the backup schedule
-			err = bm.StartBackupSchedule(mapName)
+		saveFile := fmt.Sprintf("./data/%s.save", mapName) // Corrected path
+		if _, err := os.Stat(saveFile); err == nil {
+			data, err := os.ReadFile(saveFile)
 			if err != nil {
-				return fmt.Errorf("failed to start backup schedule for %s: %w", mapName, err)
+				return fmt.Errorf("failed to read save file for %s: %w", mapName, err)
 			}
-			fmt.Printf("Started backup schedule for %s\n", mapName)
-		} else {
-			// If the saved file has a timestamp, resume the backup schedule
-			fmt.Printf("Resuming backup schedule for %s with last backup at %s\n", mapName, lastBackupTimeStr)
-			// Optionally, start the schedule if it was not already running
-			err = bm.StartBackupSchedule(mapName)
-			if err != nil {
-				return fmt.Errorf("failed to start backup schedule for %s: %w", mapName, err)
+			if string(data) == "true" {
+				err := bm.StartBackupSchedule(mapName)
+				if err != nil {
+					return fmt.Errorf("failed to resume backup schedule for %s: %w", mapName, err)
+				}
 			}
 		}
 	}

@@ -1,8 +1,8 @@
 {
     "maps": {
         "island": {
-            "zip_dir": "backups/island",
-            "extract_dir": "data/island",
+            "zip_dir": "C:/Users/Doanrii/Documents/test-bakc/backup/island",
+            "extract_dir": "C:/Users/Doanrii/Documents/test-bakc/restore/island",
             "file_extensions":  [
                 ".arktributetribe",
                 ".arkprofile",
@@ -17,8 +17,8 @@
             "retention_days": 30
         },
         "center": {
-            "zip_dir": "backups/center",
-            "extract_dir": "data/center",
+            "zip_dir": "C:/Users/Doanrii/Documents/test-bakc/backup/center",
+            "extract_dir": "C:/Users/Doanrii/Documents/test-bakc/restore/center",
             "file_extensions":  [
                 ".arktributetribe",
                 ".arkprofile",
@@ -27,7 +27,7 @@
                 ".tribebak"
             ],
             "specific_files": [
-            "ScorchedEarth_WP.ark"
+            "TheCenter_WP.ark"
             ],
             "interval_minutes": 30,
             "retention_days": 30

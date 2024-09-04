@@ -1,6 +1,7 @@
 package api
 
 import (
+	"asa_servermanager_api/backup"
 	"asa_servermanager_api/processmanager"
 	"asa_servermanager_api/rcon"
 	"encoding/json"
@@ -8,43 +9,53 @@ import (
 	"net/http"
 )
 
-var process_conf = "config/process_config.json"
-var backup_conf = "config/backup_config.json"
+var (
+	process_conf = "config/process_config.json"
+	backup_conf  = "config/backup_config.json"
+)
 
 func StartProcess(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
 	pm, err := processmanager.NewProcessManager(process_conf)
 	if err != nil {
-		log.Fatalf("Failed to create process manager: %v", err)
+		log.Printf("Failed to create process manager: %v", err)
 	}
-	pm.EnableProcess(mapName)
-	response := map[string]string{"status": "Process started", "map": mapName}
+	res := pm.EnableProcess(mapName)
+
+	bm, err := backup.NewBackupManager(backup_conf)
+	if err != nil {
+		log.Printf("Failed to initialize BackupManager: %v", err)
+	}
+
+	err = bm.StartBackupSchedule(mapName)
+	if err != nil {
+		log.Printf("Failed to start backup schedule for map 'center': %v", err)
+	}
+
+	response := map[string]string{"status": "Process started", "map": mapName, "data": res}
 	json.NewEncoder(w).Encode(response)
 }
 
-// StopProcess handles the /stop endpoint
 func StopProcess(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
 	pm, err := processmanager.NewProcessManager(process_conf)
 	if err != nil {
-		log.Fatalf("Failed to create process manager: %v", err)
+		log.Printf("Failed to create process manager: %v", err)
 	}
-	pm.DisableProcess(mapName)
-	response := map[string]string{"status": "Process stopped", "map": mapName}
+	res := pm.DisableProcess(mapName)
+	response := map[string]string{"status": "Process stopped", "map": mapName, "data": res}
 	json.NewEncoder(w).Encode(response)
 }
 
-// ListFiles handles the /list endpoint
 func ListFiles(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
 	fileName := r.URL.Query().Get("file")
-	// Placeholder for listing files logic
+
 	log.Printf("Listing files %s in map %s", fileName, mapName)
 	response := map[string][]string{"files": {"file1.zip", "file2.zip"}}
 	json.NewEncoder(w).Encode(response)
 }
 
-// RestoreFile handles the /restore endpoint
 func RestoreFile(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
 	zipName := r.URL.Query().Get("zip")
@@ -54,34 +65,48 @@ func RestoreFile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// ManualBackup handles the /backup endpoint
 func ManualBackup(w http.ResponseWriter, r *http.Request) {
-	// Placeholder for manual backup logic
+
 	response := map[string]string{"status": "Manual backup initiated"}
 	json.NewEncoder(w).Encode(response)
 }
 
-// ScheduleBackupOn handles the /backupon endpoint
 func ScheduleBackupOn(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
-	// Placeholder for scheduling backup logic
+
 	response := map[string]string{"status": "Scheduled backup on", "map": mapName}
 	json.NewEncoder(w).Encode(response)
 }
 
-// ScheduleBackupOff handles the /backupoff endpoint
 func ScheduleBackupOff(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
-	// Placeholder for disabling scheduled backup logic
+
 	response := map[string]string{"status": "Scheduled backup off", "map": mapName}
 	json.NewEncoder(w).Encode(response)
 }
 
-// RestoreFile handles the /restore endpoint
 func RconComs(w http.ResponseWriter, r *http.Request) {
 	mapName := r.URL.Query().Get("map")
 	rComs := r.URL.Query().Get("command")
 	repz := rcon.RconCommand(mapName, rComs)
 	response := map[string]string{"status": "Command executed", "map": mapName, "data": repz}
+	json.NewEncoder(w).Encode(response)
+}
+
+func GetMapLogs(w http.ResponseWriter, r *http.Request) {
+	mapName := r.URL.Query().Get("map")
+
+	logs, err := processmanager.RetrieveLogs(mapName)
+	if err != nil {
+		log.Printf("Failed to create process manager: %v", err)
+	}
+
+	response := map[string]interface{}{
+		"status": "Logs retrieved",
+		"map":    mapName,
+		"logs":   logs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

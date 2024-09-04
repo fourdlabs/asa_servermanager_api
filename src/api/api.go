@@ -56,6 +56,7 @@ func SetupRoutes() {
 	http.HandleFunc("/backupon", rateLimitMiddleware(ScheduleBackupOn))
 	http.HandleFunc("/backupoff", rateLimitMiddleware(ScheduleBackupOff))
 	http.HandleFunc("/rcon", rateLimitMiddleware(RconComs))
+	http.HandleFunc("/logs", rateLimitMiddleware(GetMapLogs))
 
 	http.ListenAndServe(":8080", nil)
 }

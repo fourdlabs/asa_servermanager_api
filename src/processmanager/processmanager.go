@@ -1,6 +1,7 @@
 package processmanager
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,9 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"asa_servermanager_api/rcon"
 )
 
-// ProcessConfig holds configuration for a single process.
 type ProcessConfig struct {
 	Map             string   `json:"map"`
 	Executable      string   `json:"executable"`
@@ -21,18 +23,19 @@ type ProcessConfig struct {
 	RestartInterval int      `json:"restart_interval"`
 }
 
-// ProcessManager manages the processes defined in the configuration.
 type ProcessManager struct {
 	configs   map[string]ProcessConfig
 	processes map[string]*exec.Cmd
 	mu        sync.Mutex
-	mapMu     sync.Mutex
+	logs      map[string][]string
 }
 
-var myMap = make(map[string]bool)
-var myMapSarted = make(map[string]bool)
+var (
+	myMap       = make(map[string]bool)
+	myMapSarted = make(map[string]bool)
+	processLogs = make(map[string][]string)
+)
 
-// NewProcessManager creates a new ProcessManager instance with the given configuration file.
 func NewProcessManager(configFile string) (*ProcessManager, error) {
 	pm := &ProcessManager{
 		configs:   make(map[string]ProcessConfig),
@@ -51,7 +54,6 @@ func NewProcessManager(configFile string) (*ProcessManager, error) {
 	return pm, nil
 }
 
-// LoadProcessConfigs loads the process configurations from a JSON file.
 func LoadProcessConfigs(filename string) ([]ProcessConfig, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -66,16 +68,10 @@ func LoadProcessConfigs(filename string) ([]ProcessConfig, error) {
 	return configs, nil
 }
 
-// StopProcess terminates a running process.
-func StopProcess(cmd *exec.Cmd) error {
-	return cmd.Process.Kill()
-}
-
 func IsProcessRunning(pid int) bool {
-	// Convert PID to string
+
 	pidStr := strconv.Itoa(pid)
 
-	// Execute `tasklist` command to check if the process is running
 	cmd := exec.Command("tasklist", "/FI", "PID eq "+pidStr)
 	output, err := cmd.Output()
 	if err != nil {
@@ -83,13 +79,10 @@ func IsProcessRunning(pid int) bool {
 		return false
 	}
 
-	// Check if PID appears in the output
 	return strings.Contains(string(output), pidStr)
 }
 
-// SavePID saves the PID to a file.
 func SavePID(filename string, pid int) error {
-	// Ensure the directory exists
 	dir := filepath.Dir(filename)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		log.Printf("Directory %s does not exist. Creating...", dir)
@@ -98,7 +91,6 @@ func SavePID(filename string, pid int) error {
 		}
 	}
 
-	// Create or open the PID file
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create PID file %s: %v", filename, err)
@@ -109,7 +101,6 @@ func SavePID(filename string, pid int) error {
 		}
 	}()
 
-	// Write the PID to the file
 	_, err = fmt.Fprintf(file, "%d", pid)
 	if err != nil {
 		return fmt.Errorf("failed to write PID to file %s: %v", filename, err)
@@ -119,7 +110,6 @@ func SavePID(filename string, pid int) error {
 	return nil
 }
 
-// ReadPID reads the PID from a file.
 func ReadPID(filename string) (int, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -133,14 +123,12 @@ func ReadPID(filename string) (int, error) {
 	return pid, nil
 }
 
-// RemovePID removes the PID file.
 func RemovePID(filename string) error {
 	return os.Remove(filename)
 }
 
-// GeneratePIDFileName generates a unique PID file name based on the process map name.
 func GeneratePIDFileName(mapName string) string {
-	return fmt.Sprintf("%s.pid", mapName)
+	return fmt.Sprintf("./data/%s.pid", mapName)
 }
 
 func (pm *ProcessManager) MonitorProcess(mapName string) {
@@ -153,66 +141,154 @@ func (pm *ProcessManager) MonitorProcess(mapName string) {
 		return
 	}
 
-	pidFile := GeneratePIDFileName(mapName)
+	pidFile := filepath.Join("./data", GeneratePIDFileName(mapName))
+	logFile, err := CreateLogFile(mapName)
+	if err != nil {
+		log.Printf("Error creating log file: %v", err)
+		return
+	}
+	defer logFile.Close()
 
 	for {
 		pid, err := ReadPID(pidFile)
 		if err == nil && IsProcessRunning(pid) {
-			log.Printf("Process '%s' is running with PID %d", mapName, pid)
-		} else {
-			if myMap[mapName] {
-				myMapSarted[mapName] = true
-				// Start the process
-				cmd := exec.Command(config.Executable, config.Args...)
-				cmd.Dir = filepath.Dir(config.Executable) // Set working directory to the executable's directory
-				err = cmd.Start()
-				if err != nil {
-					log.Printf("Failed to start process '%s': %v", mapName, err)
-					time.Sleep(time.Duration(config.RestartInterval) * time.Second)
-					continue
-				}
+			// Process is running; no need to restart it.
+			time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+			continue
+		}
 
-				// Attempt to save the PID to a file
-				if err := SavePID(pidFile, cmd.Process.Pid); err != nil {
-					log.Printf("Failed to save PID for process '%s': %v", mapName, err)
-					// Kill the process if PID could not be saved
-					cmd.Process.Kill()
-					time.Sleep(time.Duration(config.RestartInterval) * time.Second)
-					continue
-				}
+		if myMap[mapName] {
+			myMap[mapName] = true
+			myMapSarted[mapName] = true
 
-				log.Printf("Process '%s' started successfully with PID %d", mapName, cmd.Process.Pid)
+			cmd := exec.Command(config.Executable, config.Args...)
+			cmd.Dir = filepath.Dir(config.Executable)
 
-				pm.mu.Lock()
-				pm.processes[mapName] = cmd
-				pm.mu.Unlock()
-
-				// Wait for the process to exit and remove the PID file
-				go func() {
-					err := cmd.Wait()
-					if err != nil {
-						log.Printf("Process '%s' exited with error: %v", mapName, err)
-					}
-					if removeErr := RemovePID(pidFile); removeErr != nil {
-						log.Printf("Failed to remove PID file for process '%s': %v", mapName, removeErr)
-					}
-
-					pm.mu.Lock()
-					delete(pm.processes, mapName)
-					pm.mu.Unlock()
-				}()
-			} else {
-				log.Printf("Process '%s' is not enabled. Skipping...", mapName)
-				break
+			stdoutPipe, err := cmd.StdoutPipe()
+			if err != nil {
+				log.Printf("Failed to create stdout pipe for process '%s': %v", mapName, err)
+				time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+				continue
+			}
+			stderrPipe, err := cmd.StderrPipe()
+			if err != nil {
+				log.Printf("Failed to create stderr pipe for process '%s': %v", mapName, err)
+				time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+				continue
 			}
 
+			if err := cmd.Start(); err != nil {
+				log.Printf("Failed to start process '%s': %v", mapName, err)
+				time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+				continue
+			}
+
+			go func() {
+				scanner := bufio.NewScanner(stdoutPipe)
+				for scanner.Scan() {
+					logMessage := fmt.Sprintf("%s", scanner.Text())
+					WriteLog(logFile, logMessage)
+				}
+			}()
+			go func() {
+				scanner := bufio.NewScanner(stderrPipe)
+				for scanner.Scan() {
+					logMessage := fmt.Sprintf("%s", scanner.Text())
+					WriteLog(logFile, logMessage)
+				}
+			}()
+
+			if err := SavePID(pidFile, cmd.Process.Pid); err != nil {
+				log.Printf("Failed to save PID for process '%s': %v", mapName, err)
+				cmd.Process.Kill()
+				time.Sleep(time.Duration(config.RestartInterval) * time.Second)
+				continue
+			}
+
+			log.Printf("Process '%s' started successfully with PID %d", mapName, cmd.Process.Pid)
+
+			pm.mu.Lock()
+			pm.processes[mapName] = cmd
+			pm.mu.Unlock()
+
+			go func() {
+				err := cmd.Wait()
+				if err != nil {
+					log.Printf("Process '%s' exited with error: %v", mapName, err)
+				}
+				if removeErr := RemovePID(pidFile); removeErr != nil {
+					log.Printf("Failed to remove PID file for process '%s': %v", mapName, removeErr)
+				}
+
+				pm.mu.Lock()
+				delete(pm.processes, mapName)
+				pm.mu.Unlock()
+			}()
+		} else {
+			log.Printf("Process '%s' is not enabled. Skipping...", mapName)
+			break
 		}
 
 		time.Sleep(time.Duration(config.RestartInterval) * time.Second)
 	}
 }
 
-// StartAllProcesses resumes monitoring all processes defined in the configuration if a valid PID file exists.
+func CreateLogFile(mapName string) (*os.File, error) {
+	// Get the current date and time in the format MM-DD-YYYY_HH_MM_AM/PM
+	dateStr := time.Now().Format("01-02-2006")
+	timeStr := time.Now().Format("03_04_PM")
+	logFileName := fmt.Sprintf("./logs/%s_%s_%s.log", mapName, dateStr, timeStr)
+
+	// Create the log file
+	file, err := os.Create(logFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log file %s: %v", logFileName, err)
+	}
+	return file, nil
+}
+
+func WriteLog(file *os.File, message string) error {
+	_, err := file.WriteString(message + "\n")
+	if err != nil {
+		return fmt.Errorf("failed to write to log file: %v", err)
+	}
+	return nil
+}
+
+func RetrieveLogs(mapName string) (string, error) {
+	// Get the current date in the format MM-DD-YYYY
+	dateStr := time.Now().Format("01-02-2006")
+	logFileName := fmt.Sprintf("./logs/%s_%s.log", mapName, dateStr)
+
+	// Open the log file
+	file, err := os.Open(logFileName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "No logs found for the specified process.", nil
+		}
+		return "", fmt.Errorf("failed to open log file %s: %w", logFileName, err)
+	}
+	defer file.Close()
+
+	// Read the log file
+	stat, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("failed to stat log file %s: %w", logFileName, err)
+	}
+
+	if stat.Size() == 0 {
+		return "Log file is empty.", nil
+	}
+
+	data := make([]byte, stat.Size())
+	_, err = file.Read(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to read log file %s: %w", logFileName, err)
+	}
+
+	return string(data), nil
+}
+
 func (pm *ProcessManager) StartAllProcesses() {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -220,7 +296,7 @@ func (pm *ProcessManager) StartAllProcesses() {
 	for mapName := range pm.configs {
 		pidFile := GeneratePIDFileName(mapName)
 		if _, err := os.Stat(pidFile); err == nil {
-			// PID file exists; check if the process is running
+
 			pid, err := ReadPID(pidFile)
 			if err == nil && IsProcessRunning(pid) {
 				log.Printf("Resuming monitoring of existing process '%s' with PID %d", mapName, pid)
@@ -229,35 +305,45 @@ func (pm *ProcessManager) StartAllProcesses() {
 				continue
 			}
 		}
-		// If PID file does not exist or process is not running, skip this process
+
 		log.Printf("PID file for '%s' is missing or invalid. Skipping process...", mapName)
 	}
 }
 
-// EnableProcess starts monitoring a specific process.
-func (pm *ProcessManager) EnableProcess(mapName string) {
-	myMap[mapName] = true
+func (pm *ProcessManager) EnableProcess(mapName string) string {
 	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
 	if _, exists := pm.configs[mapName]; exists {
 		if myMapSarted[mapName] {
 			log.Printf("Map already running")
-			return
+			return "Map already running"
 		}
+		myMap[mapName] = true
 		go pm.MonitorProcess(mapName)
+		return "Successfully started the map " + mapName
 	}
-	pm.mu.Unlock()
+
+	return "Eror: Map " + mapName + " not found"
 }
 
-// DisableProcess stops monitoring a specific process.
-func (pm *ProcessManager) DisableProcess(mapName string) {
+func mergedID(m string, e string) string {
+	return fmt.Sprintf("%s%s", m, e)
+}
+
+func (pm *ProcessManager) DisableProcess(mapName string) string {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
 	myMap[mapName] = false
 	myMapSarted[mapName] = false
-	pm.mu.Lock()
-	cmd, running := pm.processes[mapName]
-	if running {
-		StopProcess(cmd)
+
+	if rcon.DummyRcon(mapName, "doexit") == "Exiting... \n " {
 		delete(pm.processes, mapName)
-		RemovePID(GeneratePIDFileName(mapName))
+		RemovePID(mergedID(mapName, "_saved.pid"))
+		RemovePID(mergedID(mapName, ".save"))
+		return "Successfully stopped the map " + mapName
 	}
-	pm.mu.Unlock()
+
+	return "Error: Shutting down the map " + mapName
 }

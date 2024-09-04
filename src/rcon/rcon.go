@@ -58,7 +58,8 @@ func doRcon(c string, s string, p string) string {
 	return response
 }
 
-func dummyRcon(m string, c string) string {
+func DummyRcon(m string, c string) string {
+	log.Printf("Map: %s\nCommands: %s", m, c)
 	if c == "doexit" {
 		return "Exiting... \n "
 	}
